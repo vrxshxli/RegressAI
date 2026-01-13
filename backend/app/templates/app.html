@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>RegressAI — Evaluation Console</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <!-- Add Chart.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+</head>
+
+<body>
+  <div class="app-container">
+
+    <!-- NOTIFICATIONS BELL -->
+    <div class="notifications-bell" id="notifBell" title="Notifications">
+      🔔 <span id="notifCount" class="badge">0</span>
+    </div>
+
+    <!-- NOTIFICATIONS PANEL -->
+    <div id="notificationsPanel" class="notifications-panel" style="display:none;">
+      <div class="notifications-header">
+        <h4>Notifications</h4>
+        <button class="btn-icon" id="closeNotifBtn">✕</button>
+      </div>
+
+      <div id="notificationsList" class="notifications-list">
+        <div class="muted">No notifications</div>
+      </div>
+
+      <div class="notifications-footer">
+        <button class="btn small alt" id="refreshNotifBtn">Refresh</button>
+      </div>
+    </div>
+
+    <!-- CASES SIDEBAR -->
+    <aside class="cases-sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="logo">🧠</div>
+          <div>
+            <h1>RegressAI</h1>
+            <div class="small">Version Control for LLMs</div>
+          </div>
+        </div>
+
+        <button class="btn primary btn-new-case" id="btnNewCase">+ New Case</button>
+      </div>
+
+      <div id="casesList" class="cases-list">
+        <div class="loading-state">
+          <div class="spinner"></div>
+          <p>Loading cases...</p>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <!-- Premium Badge -->
+        <div id="premiumBadge" class="premium-badge" style="display:none;">
+          <span class="badge badge-premium">✨ PRO</span>
+          <span id="deepDivesRemaining" class="small">5 deep dives left</span>
+        </div>
+        
+        <button class="btn alt btn-settings" id="btnSettings">⚙️ Settings</button>
+        <button class="btn alt btn-logout" id="btnLogout">Logout</button>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+
+      <!-- SETUP PANEL -->
+      <section class="setup-panel">
+        <div class="panel">
+          <h3>Evaluation Setup</h3>
+
+          <!-- COLLAB BAR -->
+          <div class="collab-bar">
+            <div class="collab-left">
+              <span class="collab-label">Team</span>
+              <div id="teamAvatars" class="team-avatars"></div>
+            </div>
+
+            <div class="collab-right">
+              <button class="btn small" id="inviteBtn">Invite</button>
+            </div>
+          </div>
+
+          <!-- INPUTS -->
+          <div class="input-grid">
+            <div class="input-group">
+              <label>Old API URL</label>
+              <input id="oldApi" value="http://127.0.0.1:8000/mock/old-legal-ai">
+            </div>
+
+            <div class="input-group">
+              <label>New API URL</label>
+              <input id="newApi" value="http://127.0.0.1:8000/mock/new-legal-ai">
+            </div>
+          </div>
+
+          <div class="input-group">
+            <label>Environment Variables (JSON)</label>
+            <textarea id="envVars">{}</textarea>
+          </div>
+
+          <div class="input-group">
+            <label>Request Body Template</label>
+            <textarea id="bodyTemplate">{ "prompt": "{{question}}" }</textarea>
+            <div class="hint">Keep <code>{{question}}</code></div>
+          </div>
+
+          <div class="input-grid">
+            <div class="input-group">
+              <label>Response Path</label>
+              <input id="responsePath" value="choices[0].message.content">
+            </div>
+
+            <div class="input-group">
+              <label>Number of Test Cases</label>
+              <input id="numCases" type="number" value="3">
+            </div>
+          </div>
+
+          <div class="input-group">
+            <label>System Goal</label>
+            <textarea id="goal">Explain Indian income tax safely.</textarea>
+          </div>
+
+          <div class="input-grid">
+            <div class="input-group">
+              <label>Old Prompt</label>
+              <textarea id="oldPrompt"></textarea>
+            </div>
+
+            <div class="input-group">
+              <label>New Prompt</label>
+              <textarea id="newPrompt"></textarea>
+            </div>
+          </div>
+
+          <div class="action-bar">
+            <button class="btn primary btn-analyze" id="btnAnalyze">⚡ Analyze</button>
+            <button class="btn premium btn-deep-dive" id="btnDeepDive" style="display:none;">
+              🔬 Deep Dive
+            </button>
+            <span class="btn-hint">Any change creates a new version</span>
+          </div>
+          
+          <!-- Premium Upsell (for free users) -->
+          <div id="premiumUpsell" class="premium-upsell">
+            <p>Still can't figure out what's wrong? 
+              <a href="#" id="upgradeToPremiumLink">Check out Premium</a>
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- RESULTS + COLLAB -->
+      <section class="results-panel">
+        <div class="topbar">
+          <div id="runId" class="run-id">No version selected</div>
+          <div id="statusText" class="status">Idle</div>
+        </div>
+
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="summary">📊 Summary</button>
+          <button class="tab-btn" data-tab="diff">🔍 Diff</button>
+          <button class="tab-btn" data-tab="suggest">💡 Insights</button>
+          <button class="tab-btn premium-tab" data-tab="visualizations" style="display:none;">
+            📈 Visualizations <span class="badge badge-premium">PRO</span>
+          </button>
+          <button class="tab-btn" data-tab="snapshot">📸 Snapshot</button>
+        </div>
+
+        <div class="content">
+
+          <!-- LEFT PANES -->
+          <div class="panes-area">
+
+            <!-- SUMMARY -->
+            <div id="tab-summary" class="tab pane active">
+              <h2>Summary</h2>
+              <div id="summaryCard" class="card">
+                <p class="muted">Run analysis to see results</p>
+              </div>
+
+              <!-- COMMENTS -->
+              <div class="comments-panel card">
+                <h3>Comments</h3>
+                <div id="commentsList">
+                  <div class="muted">No comments yet</div>
+                </div>
+
+                <div class="comment-box">
+                  <textarea id="newCommentText" placeholder="Add a comment..."></textarea>
+                  <button class="btn small" id="postCommentBtn">Post</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- DIFF -->
+            <div id="tab-diff" class="tab pane">
+              <h2>Deterministic Diff</h2>
+              <div class="side-by-side">
+                <div>
+                  <h4>Old Output</h4>
+                  <pre id="oldSample"></pre>
+                </div>
+                <div>
+                  <h4>New Output</h4>
+                  <pre id="newSample"></pre>
+                </div>
+              </div>
+            </div>
+
+            <!-- INSIGHTS -->
+            <div id="tab-suggest" class="tab pane">
+              <h2>Insights</h2>
+              <div id="insightSummary"></div>
+              <div id="insightReview"></div>
+              
+              <h3>Key Findings</h3>
+              <ul id="insightFindings" class="card-list"></ul>
+              
+              <h3>Suggestions</h3>
+              <div id="insightSuggestions"></div>
+              
+              <h3>Revised Prompt</h3>
+              <textarea id="revisedPrompt" readonly></textarea>
+              
+              <h3>Quick Tests</h3>
+              <ul id="quickTests" class="card-list"></ul>
+              
+              <h3>Metrics to Watch</h3>
+              <ul id="metrics" class="card-list"></ul>
+            </div>
+
+            <!-- VISUALIZATIONS (PREMIUM) -->
+            <div id="tab-visualizations" class="tab pane">
+              <h2>🔬 Deep Dive Visualizations</h2>
+              
+              <div class="viz-grid">
+                <div class="viz-card">
+                  <h3>Metrics Comparison</h3>
+                  <canvas id="radarChart"></canvas>
+                </div>
+                
+                <div class="viz-card">
+                  <h3>Quality Distribution</h3>
+                  <canvas id="qualityChart"></canvas>
+                </div>
+                
+                <div class="viz-card">
+                  <h3>Performance Over Test Cases</h3>
+                  <canvas id="performanceChart"></canvas>
+                </div>
+                
+                <div class="viz-card">
+                  <h3>Hallucination Rate</h3>
+                  <canvas id="hallucinationChart"></canvas>
+                </div>
+              </div>
+              
+              <h3>Advanced Metrics</h3>
+              <div id="deepMetrics" class="deep-metrics"></div>
+            </div>
+
+            <!-- SNAPSHOT -->
+            <div id="tab-snapshot" class="tab pane">
+              <h2>Raw JSON Snapshot</h2>
+              <pre id="snapshot" class="pre"></pre>
+            </div>
+          </div>
+
+          <!-- RIGHT: COLLAB -->
+          <aside class="collab-panel">
+            <h3>Team Members</h3>
+            <div id="teamMembersList">
+              <div class="muted">No collaborators</div>
+            </div>
+          </aside>
+
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- PRICING MODAL -->
+  <div id="pricingModal" class="modal" style="display:none;">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2>Choose Your Plan</h2>
+        <button class="btn-icon modal-close" id="closePricingBtn">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="pricing-grid">
+          <!-- Free Tier -->
+          <div class="pricing-card">
+            <h3>Freemium</h3>
+            <div class="price">₹0<span>/month</span></div>
+            <ul class="features">
+              <li>✅ Basic Analysis</li>
+              <li>✅ 3 test cases per run</li>
+              <li>✅ Deterministic diff</li>
+              <li>✅ Basic insights</li>
+              <li>✅ Team collaboration</li>
+              <li>❌ No deep dive</li>
+              <li>❌ No visualizations</li>
+              <li>🔑 Requires your API key</li>
+            </ul>
+            <button class="btn alt" disabled>Current Plan</button>
+          </div>
+
+          <!-- Pro Tier -->
+          <div class="pricing-card pricing-card-featured">
+            <div class="badge badge-premium">RECOMMENDED</div>
+            <h3>Pro</h3>
+            <div class="price">₹399<span>/month</span></div>
+            <ul class="features">
+              <li>✅ Everything in Free</li>
+              <li>✨ Deep Dive Analysis</li>
+              <li>✨ Adversarial testing</li>
+              <li>✨ 10+ test cases</li>
+              <li>✨ Advanced visualizations</li>
+              <li>✨ Hallucination detection</li>
+              <li>✨ Edge case analysis</li>
+              <li>✨ 5 deep dives/month</li>
+              <li>🎁 Uses RegressAI API (no key needed)</li>
+            </ul>
+            <button class="btn premium" id="upgradeToPro">Upgrade to Pro</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- INVITE MODAL -->
+  <div id="inviteModal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Invite Collaborator</h3>
+        <button class="btn-icon modal-close" id="closeInviteBtn">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="input-group">
+          <label>Email</label>
+          <input id="inviteEmail" placeholder="email@example.com">
+        </div>
+        <div class="input-group">
+          <label>Role</label>
+          <select id="inviteRole">
+            <option value="VIEWER">Viewer</option>
+            <option value="EDITOR">Editor</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn alt" id="cancelInviteBtn">Cancel</button>
+        <button class="btn primary" id="sendInviteBtn">Send Invite</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SETTINGS MODAL -->
+  <div id="settingsModal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button class="btn-icon modal-close" id="closeSettingsBtn">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="input-group">
+          <label>Groq API Key</label>
+          <input type="password" id="geminiApiKey" placeholder="Enter your Groq API key">
+          <div class="hint">
+            Get your API key from 
+            <a href="https://console.groq.com/keys" target="_blank">Groq Console</a>
+          </div>
+          <div class="hint muted" id="apiKeyHint">
+            Note: Premium users don't need to provide their API key
+          </div>
+          <div id="apiKeyStatus" class="api-key-status"></div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn alt" id="cancelSettingsBtn">Cancel</button>
+        <button class="btn primary" id="saveSettingsBtn">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script type="module" src="/static/js/firebase.js"></script>
+  <script type="module" src="/static/js/state.js"></script>
+  <script type="module" src="/static/js/utils.js"></script>
+  <script type="module" src="/static/js/api.js"></script>
+  <script type="module" src="/static/js/app.js"></script>
+  <script type="module" src="/static/js/collaboration.js"></script>
+  <script type="module" src="/static/js/premium.js"></script>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+
+
+</body>
+</html>

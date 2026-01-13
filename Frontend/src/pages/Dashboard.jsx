@@ -1,0 +1,467 @@
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { 
+  Bell, 
+  Settings, 
+  LogOut, 
+  Moon, 
+  Sun,
+  User,
+  Sparkles
+} from 'lucide-react';
+import Sidebar from '../components/Sidebar';
+import SetupPanel from '../components/SetupPanel';
+import ResultsPanel from '../components/ResultsPanel';
+import Notifications from '../components/Notifications';
+import SettingsModal from '../components/Modals/SettingsModal';
+import PricingModal from '../components/Modals/PricingModal';
+import InviteModal from '../components/Modals/InviteModal';
+import { useAuth } from '../contexts/AuthContext';
+import { usePremium } from '../contexts/PremiumContext';
+import { apiService } from '../services/api';
+import './Dashboard.css';
+
+const Dashboard = () => {
+  const [activeCase, setActiveCase] = useState(null);
+  const [cases, setCases] = useState([]);
+  const [versions, setVersions] = useState([]);
+  const [selectedVersion, setSelectedVersion] = useState(null);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pricingOpen, setPricingOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [comments, setComments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [unreadCount, setUnreadCount] = useState(0);
+  
+  // Theme State
+  const [theme, setTheme] = useState(localStorage.getItem('theme-mode') || 'system');
+
+  const { currentUser, logout } = useAuth();
+  const { is_premium: isPremium, deep_dives_remaining: deepDivesRemaining, checkSubscription } = usePremium();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!currentUser) {
+      navigate('/login');
+      return;
+    }
+    
+    // Apply theme
+    const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    const effectiveTheme = theme === "system" ? systemTheme : theme;
+    document.documentElement.setAttribute("data-theme", effectiveTheme);
+    localStorage.setItem("theme-mode", theme);
+
+    loadInitialData();
+    checkSubscription();
+  }, [currentUser, theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
+
+  const loadInitialData = async () => {
+    try {
+      const [casesData, notificationsData] = await Promise.all([
+        apiService.fetchCases(),
+        apiService.fetchNotifications()
+      ]);
+      
+      setCases(casesData.cases || []);
+      
+      // Calculate Unread Count
+      const unread = (notificationsData.notifications || []).filter(n => !n.read).length;
+      setUnreadCount(unread);
+
+      if (casesData.cases?.length > 0) {
+        const firstCase = casesData.cases[0];
+        setActiveCase(firstCase);
+        await loadCaseDetails(firstCase.case_id);
+      }
+    } catch (error) {
+      console.error('Failed to load initial data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const refreshNotifications = async () => {
+    try {
+      const data = await apiService.fetchNotifications();
+      const unread = (data.notifications || []).filter(n => !n.read).length;
+      setUnreadCount(unread);
+    } catch (e) {
+      console.error("Failed to refresh notifications", e);
+    }
+  };
+// ... existing code ...
+
+  // ---------------------- loadCaseDetails ----------------------
+const loadCaseDetails = async (caseId) => {
+  try {
+    const [caseData, members] = await Promise.all([
+      apiService.fetchCase(caseId),
+      apiService.fetchTeamMembers(caseId)
+    ]);
+
+    setVersions(caseData.versions || []);
+    setTeamMembers(members);
+
+    // Load the FULL most-recent version if available
+    if (caseData.versions?.length > 0) {
+      const latestVersionMeta = caseData.versions[0];
+
+      // Fetch the complete, normalized version (analysis_response cleaned)
+      const fullVersion = await apiService.fetchVersion(latestVersionMeta.version_id);
+
+      console.log('📦 Loaded full version:', {
+        version_id: fullVersion?.version_id,
+        has_analysis_response: !!fullVersion?.analysis_response,
+        is_deep_dive: fullVersion?.analysis_response?.is_deep_dive,
+        has_deep_dive_metrics: !!fullVersion?.analysis_response?.deep_dive_metrics,
+        has_visualization_data: !!fullVersion?.analysis_response?.visualization_data
+      });
+
+      setSelectedVersion(fullVersion);
+
+      // Also load comments
+      const commentsData = await apiService.fetchComments(fullVersion.version_id);
+      setComments(commentsData.comments || []);
+    } else {
+      setSelectedVersion(null);
+      setComments([]);
+    }
+  } catch (error) {
+    console.error('Failed to load case details:', error);
+  }
+};
+
+  const handleCreateCase = async (name) => {
+    try {
+      const newCase = await apiService.createCase(name);
+      setCases([newCase, ...cases]);
+      setActiveCase(newCase);
+      await loadCaseDetails(newCase.case_id);
+    } catch (error) {
+      console.error('Failed to create case:', error);
+    }
+  };
+
+  // ---------------------- handleRunAnalysis ----------------------
+const handleRunAnalysis = async (inputs) => {
+  try {
+    console.log('Running analysis with inputs:', inputs);
+
+    const payload = {
+      user_id: currentUser.uid,
+      case_id: activeCase?.case_id || null,
+      case_name: activeCase?.name || 'Untitled Case',
+      ...inputs
+    };
+
+    const result = await apiService.runAnalysis(payload);
+
+    // Update version list from server-side case object
+    const updatedCase = await apiService.fetchCase(result.case_id);
+    setVersions(updatedCase.versions || []);
+
+    // Fetch the fully normalized version and set as selected
+    const fullVersion = await apiService.fetchVersion(result.version_id);
+    setSelectedVersion(fullVersion);
+
+    // Load comments for the new version
+    const commentsData = await apiService.fetchComments(fullVersion.version_id);
+    setComments(commentsData.comments || []);
+
+    // Refresh cases list (keeps sidebar up-to-date)
+    const casesData = await apiService.fetchCases();
+    setCases(casesData.cases || []);
+
+    return result;
+  } catch (error) {
+    console.error('Analysis failed:', error);
+    throw error;
+  }
+};
+
+
+// Replace handleDeepDive in Dashboard.jsx with this:
+
+// ---------------------- handleDeepDive ----------------------
+const handleDeepDive = async (inputs) => {
+  console.log('🔥 Dashboard handleDeepDive called');
+
+  try {
+    // Get fresh subscription status
+    const freshStatus = await checkSubscription();
+    console.log('Fresh subscription:', freshStatus);
+
+    if (!freshStatus.is_premium) {
+      console.log('Not premium, opening pricing modal');
+      setPricingOpen(true);
+      return;
+    }
+
+    if (freshStatus.deep_dives_remaining <= 0) {
+      alert('No deep dives remaining this month');
+      return;
+    }
+
+    const payload = {
+      user_id: currentUser.uid,
+      case_id: activeCase?.case_id || null,
+      case_name: activeCase?.name || 'Deep Dive Analysis',
+      ...inputs,
+      n_cases: Math.max(inputs.n_cases || 3, 10)
+    };
+
+    const result = await apiService.runDeepDive(payload);
+
+    console.log('✅ Deep dive completed, version_id:', result.version_id);
+
+    // Update version list
+    const updatedCase = await apiService.fetchCase(result.case_id);
+    setVersions(updatedCase.versions || []);
+
+    // Fetch normalized full deep dive version
+    const fullVersion = await apiService.fetchVersion(result.version_id);
+
+    console.log('📦 Full deep dive version loaded:', {
+      version_id: fullVersion.version_id,
+      is_deep_dive: fullVersion.analysis_response?.is_deep_dive,
+      has_deep_dive_metrics: !!fullVersion.analysis_response?.deep_dive_metrics,
+      has_visualization_data: !!fullVersion.analysis_response?.visualization_data
+    });
+
+    setSelectedVersion(fullVersion);
+
+    // Load comments
+    const commentsData = await apiService.fetchComments(fullVersion.version_id);
+    setComments(commentsData.comments || []);
+
+    // Refresh cases and subscription
+    await Promise.all([
+      apiService.fetchCases().then(data => setCases(data.cases || [])),
+      checkSubscription()
+    ]);
+
+    return result;
+  } catch (error) {
+    console.error('Deep dive failed:', error);
+    throw error;
+  }
+};
+
+  // ---------------------- handleSelectVersion ----------------------
+const handleSelectVersion = async (version) => {
+  try {
+    // Always fetch the full normalized version data
+    const fullVersion = await apiService.fetchVersion(version.version_id);
+
+    console.log('📦 Version selected:', {
+      version_id: fullVersion.version_id,
+      is_deep_dive: fullVersion.analysis_response?.is_deep_dive,
+      has_deep_dive_metrics: !!fullVersion.analysis_response?.deep_dive_metrics,
+      has_visualization_data: !!fullVersion.analysis_response?.visualization_data
+    });
+
+    setSelectedVersion(fullVersion);
+
+    // Load comments for this version
+    const commentsData = await apiService.fetchComments(fullVersion.version_id);
+    setComments(commentsData.comments || []);
+  } catch (error) {
+    console.error('Failed to load version:', error);
+  }
+};
+
+
+  const handleAddComment = async (text) => {
+    if (!selectedVersion || !text.trim()) return;
+    
+    try {
+      await apiService.addComment({
+        version_id: selectedVersion.version_id,
+        case_id: selectedVersion.case_id,
+        text: text.trim()
+      });
+      
+      const commentsData = await apiService.fetchComments(selectedVersion.version_id);
+      setComments(commentsData.comments || []);
+    } catch (error) {
+      console.error('Failed to add comment:', error);
+    }
+  };
+
+  const handleInvite = async (email, role) => {
+    if (!activeCase) return;
+    
+    try {
+      await apiService.inviteMember({
+        case_id: activeCase.case_id,
+        invited_email: email,
+        role
+      });
+      
+      const members = await apiService.fetchTeamMembers(activeCase.case_id);
+      setTeamMembers(members);
+      setInviteOpen(false);
+      alert('Invitation sent successfully!');
+    } catch (error) {
+      console.error('Failed to send invitation:', error);
+      alert(`Failed to send invitation: ${error.message}`);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="dashboard-loading">
+        <div className="loading-spinner">
+          <div className="brain-logo">🧠</div>
+          <p>Loading your workspace...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="dashboard">
+      {/* Top Navigation Bar */}
+      <nav className="top-nav">
+        <div className="nav-left">
+          <div className="page-title">
+            {activeCase ? (
+              <>
+                <span className="text-muted">Workspace /</span> {activeCase.name}
+              </>
+            ) : 'Dashboard'}
+          </div>
+        </div>
+        
+        <div className="nav-right">
+          {isPremium && (
+            <div className="premium-indicator">
+              <Sparkles size={14} className="text-yellow-400" fill="currentColor" />
+              <span className="badge-text">PRO</span>
+            </div>
+          )}
+
+          <button 
+            className="nav-icon-btn theme-toggle" 
+            onClick={toggleTheme}
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+          >
+            {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
+
+          <button
+            className="nav-icon-btn notifications-btn"
+            onClick={() => {
+              setNotificationsOpen(!notificationsOpen);
+              refreshNotifications(); // Refresh when opening
+            }}
+            title="Notifications"
+          >
+            <Bell size={20} />
+            {unreadCount > 0 && (
+              <span className="notification-badge">{unreadCount}</span>
+            )}
+          </button>
+
+          <div className="divider-vertical"></div>
+
+          <div className="user-menu">
+            <div className="user-avatar" title={currentUser?.email}>
+              {currentUser?.email?.charAt(0).toUpperCase()}
+            </div>
+          </div>
+
+          <button 
+            className="nav-icon-btn" 
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+          >
+            <Settings size={20} />
+          </button>
+          
+          <button 
+            className="nav-icon-btn logout-btn" 
+            onClick={logout}
+            title="Logout"
+          >
+            <LogOut size={20} />
+          </button>
+        </div>
+      </nav>
+
+      {/* Main Content */}
+      <div className="dashboard-content">
+        <Sidebar
+          cases={cases}
+          activeCase={activeCase}
+          versions={versions}
+          selectedVersion={selectedVersion}
+          onCreateCase={handleCreateCase}
+          onSelectCase={loadCaseDetails}
+          onSelectVersion={handleSelectVersion}
+        />
+
+        <div className="main-panel">
+          <SetupPanel
+            activeCase={activeCase}
+            selectedVersion={selectedVersion}
+            onRunAnalysis={handleRunAnalysis}
+            onDeepDive={handleDeepDive}
+            onInvite={() => setInviteOpen(true)}
+            teamMembers={teamMembers}
+          />
+
+          <ResultsPanel
+            selectedVersion={selectedVersion}
+            comments={comments}
+            teamMembers={teamMembers}
+            onAddComment={handleAddComment}
+            isPremium={isPremium}
+            onInvite={() => setInviteOpen(true)}
+          />
+        </div>
+      </div>
+
+      {/* Modals */}
+      {notificationsOpen && (
+        <Notifications onClose={() => {
+          setNotificationsOpen(false);
+          refreshNotifications();
+        }} />
+      )}
+      
+      {settingsOpen && (
+        <SettingsModal
+          isOpen={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          isPremium={isPremium}
+        />
+      )}
+      
+      {pricingOpen && (
+        <PricingModal
+          isOpen={pricingOpen}
+          onClose={() => setPricingOpen(false)}
+          onUpgrade={checkSubscription}
+        />
+      )}
+      
+      {inviteOpen && (
+        <InviteModal
+          isOpen={inviteOpen}
+          onClose={() => setInviteOpen(false)}
+          onSubmit={handleInvite}
+        />
+      )}
+    </div>
+  );
+};
+
+export default Dashboard;
